@@ -40,18 +40,26 @@ from tensorpack.dataflow import BatchData, MultiProcessRunner, PrintData, MapDat
 from data import CustomDataSet
 from models.unet import UNet, UPPNet, FusionNet
 
-class DiceLoss(nn.Module):
+class BalancedDiceLoss(nn.Module):
     def init(self):
-        super(DiceLoss, self).init()
+        super(BalancedDiceLoss, self).init()
 
-    def forward(self, output, target):
-        smooth = 1.
+    def forward(self, output, target, smooth=1.0):
         iflat = output.contiguous().view(-1)
         tflat = target.contiguous().view(-1)
         intersection = (iflat * tflat).sum()
         A_sum = torch.sum(iflat * iflat)
         B_sum = torch.sum(tflat * tflat)
-        return 1 - ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
+        score_1 = 1 - ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
+
+        iflat = (1.0-output).contiguous().view(-1)
+        tflat = (1.0-target).contiguous().view(-1)
+        intersection = (iflat * tflat).sum()
+        A_sum = torch.sum(iflat * iflat)
+        B_sum = torch.sum(tflat * tflat)
+        score_2 = 1 - ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
+
+        return (score_1+score_2)/2.0
 
 def DiceCoef(output, target):
     smooth = 1.
@@ -92,7 +100,7 @@ class ImageNetLightningModel(LightningModule):
         # print(self.model.parameters())
         # logits -> nn.BCEWithLogitsLoss
         # logits -> sigmoid -> nn.BCELoss
-        self.criterion = DiceLoss()
+        self.criterion = BalancedDiceLoss()
 
     def forward(self, x):
         """Summary

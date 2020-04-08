@@ -51,11 +51,10 @@ class CustomDataSet(RNGDataFlow):
     def __iter__(self):
         # TODO
         indices = list(range(self.__len__()))
-        if self.shuffle:
+        if self.is_train:
             self.rng.shuffle(indices)
 
-        for _ in indices:
-            idx = self.rng.randint(0, self._size)
+        for idx in indices:
 
             # image = self.images[idx].copy()
             # label = self.labels[idx].copy()
