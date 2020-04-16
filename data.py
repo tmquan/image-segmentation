@@ -65,6 +65,7 @@ class CustomDataSet(RNGDataFlow):
             label[label >= 128] = 255
             # print(image.shape, label.shape)
             if self.hparams.types==1:
-                yield [image, label]
+                pathologies = ['Airspace_Opacity', 'Cardiomegaly', 'Fracture', 'Lung_Lesion', 'Pleural_Effusion', 'Pneumothorax']
+                yield [image, label[pathologies.index(self.hparams.pathology),...]]
             elif self.hparams.types==6:
                 yield [image, label[0,...], label[1,...], label[2,...], label[3,...], label[4,...], label[5,...]]

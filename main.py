@@ -89,11 +89,11 @@ class ImageNetLightningModel(LightningModule):
         """
         super(ImageNetLightningModel, self).__init__()
         self.hparams = hparams
-        if self.hparams.arch.lower() == 'unet':
+        if self.hparams.arch.lower() == 'unet' and self.hparams.backbone.lower() == 'vgg':
             self.model = UNet(input_channels=1, num_classes=self.hparams.types)
-        elif self.hparams.arch.lower() == 'uppnet':
+        elif self.hparams.arch.lower() == 'uppnet' and self.hparams.backbone.lower() == 'vgg':
             self.model = UPPNet(input_channels=1, num_classes=self.hparams.types)
-        elif self.hparams.arch.lower() == 'fusionnet':
+        elif self.hparams.arch.lower() == 'fusionnet' and self.hparams.backbone.lower() == 'vgg':
             self.model = FusionNet(input_channels=1, num_classes=self.hparams.types)
         else:
             ValueError
@@ -125,9 +125,11 @@ class ImageNetLightningModel(LightningModule):
         Returns:
             TYPE: Description
         """
-        images, target0, target1, target2, target3, target4, target5, = batch
-        target = torch.cat([target0, target1, target2, target3, target4, target5], axis=1)
-
+        if self.hparams.types==6:
+            images, target0, target1, target2, target3, target4, target5, = batch
+            target = torch.cat([target0, target1, target2, target3, target4, target5], axis=1)
+        elif self.hparams.types==1:
+            images, target = batch
         output = self.forward(images)
         loss = self.criterion(output / 255.0, target / 255.0)
 
@@ -160,9 +162,11 @@ class ImageNetLightningModel(LightningModule):
         Returns:
             TYPE: Description
         """
-        images, target0, target1, target2, target3, target4, target5, = batch
-        target = torch.cat([target0, target1, target2, target3, target4, target5], axis=1)
-
+        if self.hparams.types==6:
+            images, target0, target1, target2, target3, target4, target5, = batch
+            target = torch.cat([target0, target1, target2, target3, target4, target5], axis=1)
+        elif self.hparams.types==1:
+            images, target = batch
         output = self.forward(images)
         loss = self.criterion(output / 255.0, target / 255.0)
 
@@ -176,10 +180,11 @@ class ImageNetLightningModel(LightningModule):
             # print(viz.shape, target.shape)
             viz = torch.cat([viz, target[:,p:p+1,:,:], output[:,p:p+1,:,:]], axis=-1)
 
-        self.logger.experiment.add_image(f'{prefix}_viz',
-                                         torchvision.utils.make_grid(viz / 255.0, nrow=1,),
-                                         dataformats='CHW', 
-                                         global_step=self.global_step)
+        if batch_idx in range(5):
+            self.logger.experiment.add_image(f'{prefix}_viz',
+                                             torchvision.utils.make_grid(viz / 255.0, nrow=1, pad_value=1),
+                                             dataformats='CHW', 
+                                             global_step=self.global_step)
         # viz = torchvision.utils.make_grid(images / 255.0)
         # # print(viz.shape)
         # viz = torch.cat([viz, torchvision.utils.make_grid(target[0,:,:] / 255.0)], axis=1)
@@ -308,7 +313,7 @@ class ImageNetLightningModel(LightningModule):
         """
         ds_train = CustomDataSet(folder=self.hparams.data,
             train_or_valid='train',
-            size=10000,
+            size=np.inf,
             hparams=self.hparams
             )
         ds_train.reset_state()
@@ -342,7 +347,10 @@ class ImageNetLightningModel(LightningModule):
                                                     imgaug.Albumentations(AB.CLAHE(p=0.5)),
                                                         
                                                    ], 0)
-        ds_train = AugmentImageComponents(ds_train, ag_train, [0, 1, 2, 3, 4, 5, 6])
+        if self.hparams.types==6:
+            ds_train = AugmentImageComponents(ds_train, ag_train, [0, 1, 2, 3, 4, 5, 6])
+        elif self.hparams.types==1:
+            ds_train = AugmentImageComponents(ds_train, ag_train, [0, 1])
         ds_train = PrintData(ds_train)
         
         ds_train = BatchData(ds_train, self.hparams.batch, remainder=True)
@@ -350,14 +358,19 @@ class ImageNetLightningModel(LightningModule):
             ds_train = FixedSizeData(ds_train, 2)
         ds_train = MultiProcessRunner(ds_train, num_proc=4, num_prefetch=16)
         ds_train = PrintData(ds_train)
-        ds_train = MapData(ds_train, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
-                                                 torch.tensor(dp[1][:,np.newaxis,:,:]).float(),
-                                                 torch.tensor(dp[2][:,np.newaxis,:,:]).float(),
-                                                 torch.tensor(dp[3][:,np.newaxis,:,:]).float(),
-                                                 torch.tensor(dp[4][:,np.newaxis,:,:]).float(),
-                                                 torch.tensor(dp[5][:,np.newaxis,:,:]).float(),
-                                                 torch.tensor(dp[6][:,np.newaxis,:,:]).float(),
-                                                 ])
+        if self.hparams.types==6:
+            ds_train = MapData(ds_train, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
+                                                     torch.tensor(dp[1][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[2][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[3][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[4][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[5][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[6][:,np.newaxis,:,:]).float(),
+                                                     ])
+        elif self.hparams.types==1:
+            ds_train = MapData(ds_train, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
+                                                     torch.tensor(dp[1][:,np.newaxis,:,:]).float(),
+                                                     ])
         return ds_train
 
     @pl.data_loader
@@ -369,7 +382,7 @@ class ImageNetLightningModel(LightningModule):
         """
         ds_valid = CustomDataSet(folder=self.hparams.data,
             train_or_valid='valid',
-            size=10000,
+            size=np.inf,
             hparams=self.hparams
             )
 
@@ -381,17 +394,25 @@ class ImageNetLightningModel(LightningModule):
         ds_valid = PrintData(ds_valid)
         ds_valid = AugmentImageComponent(ds_valid, [imgaug.Albumentations(AB.CLAHE(p=1)),
                                                     ], 0)
-        ds_valid = AugmentImageComponents(ds_valid, ag_valid, [0, 1, 2, 3, 4, 5, 6])
+        if self.hparams.types==6:
+            ds_valid = AugmentImageComponents(ds_valid, ag_valid, [0, 1, 2, 3, 4, 5, 6])
+        elif self.hparams.types==1:
+            ds_valid = AugmentImageComponents(ds_valid, ag_valid, [0, 1])
         ds_valid = BatchData(ds_valid, self.hparams.batch, remainder=True)
-        # ds_valid = MultiProcessRunner(ds_valid, num_proc=4, num_prefetch=16)
-        ds_valid = MapData(ds_valid, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
-                                                 torch.tensor(dp[1][:,np.newaxis,:,:]).float(), 
-                                                 torch.tensor(dp[2][:,np.newaxis,:,:]).float(), 
-                                                 torch.tensor(dp[3][:,np.newaxis,:,:]).float(), 
-                                                 torch.tensor(dp[4][:,np.newaxis,:,:]).float(), 
-                                                 torch.tensor(dp[5][:,np.newaxis,:,:]).float(), 
-                                                 torch.tensor(dp[6][:,np.newaxis,:,:]).float(), 
-                                                 ])
+        ds_valid = MultiProcessRunner(ds_valid, num_proc=4, num_prefetch=16)
+        if self.hparams.types==6:
+            ds_valid = MapData(ds_valid, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
+                                                     torch.tensor(dp[1][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[2][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[3][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[4][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[5][:,np.newaxis,:,:]).float(),
+                                                     torch.tensor(dp[6][:,np.newaxis,:,:]).float(),
+                                                     ])
+        elif self.hparams.types==1:
+            ds_valid = MapData(ds_valid, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
+                                                     torch.tensor(dp[1][:,np.newaxis,:,:]).float(),
+                                                     ])
         return ds_valid
 
     @pl.data_loader
@@ -403,7 +424,7 @@ class ImageNetLightningModel(LightningModule):
         """
         ds_test = CustomDataSet(folder=self.hparams.data,
             train_or_valid='test',
-            size=10000,
+            size=np.inf,
             hparams=self.hparams
             )
 
@@ -435,6 +456,8 @@ class ImageNetLightningModel(LightningModule):
         parser = argparse.ArgumentParser(parents=[parent_parser])
         parser.add_argument('-a', '--arch', metavar='ARCH', default='unet', 
                             help='model architecture')
+        parser.add_argument('-bb', '--backbone', metavar='backbone', default='vgg', 
+                            help='backbone')
         parser.add_argument('--epochs', default=250, type=int, metavar='N',
                             help='number of total epochs to run')
         parser.add_argument('--seed', type=int, default=2222,
@@ -531,8 +554,8 @@ def main(hparams):
                               'ckpt'),
         save_top_k=10,
         verbose=True,
-        monitor='val_loss',  # TODO
-        mode='min'
+        monitor='val_dice_score_mean',  # TODO
+        mode='max'
     )
 
     trainer = pl.Trainer(
