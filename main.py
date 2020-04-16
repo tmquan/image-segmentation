@@ -28,6 +28,7 @@ import torchvision
 import torchvision.datasets as datasets
 import torchvision.models as models
 import torchvision.transforms as transforms
+import segmentation_models_pytorch as smp
 
 import pytorch_lightning as pl
 from pytorch_lightning.core import LightningModule
@@ -40,35 +41,64 @@ from tensorpack.dataflow import BatchData, MultiProcessRunner, PrintData, MapDat
 from data import CustomDataSet
 from models.unet import UNet, UPPNet, FusionNet
 
+def DiceCoef(output, target, smooth=1.0, epsilon=1e-7, axis=(2, 3)):
+    """
+    Compute mean dice coefficient over all abnormality classes.
+
+    Args:
+        output (Numpy tensor): tensor of ground truth values for all classes.
+                                    shape: (batch, num_classes, x_dim, y_dim)
+        target (Numpy tensor): tensor of predictions for all classes.
+                                    shape: (batch, num_classes, x_dim, y_dim)
+        axis (tuple): spatial axes to sum over when computing numerator and
+                      denominator of dice coefficient.
+                      Hint: pass this as the 'axis' argument to the K.sum
+                            and K.mean functions.
+        epsilon (float): small constant add to numerator and denominator to
+                        avoid divide by 0 errors.
+    Returns:
+        dice_coefficient (float): computed value of dice coefficient.     
+    """
+    y_true = target
+    y_pred = output
+    dice_numerator = 2*np.sum(y_true*y_pred, axis=axis) + epsilon
+    dice_denominator = (np.sum(y_true, axis=axis) + np.sum(y_pred, axis=axis) + epsilon)
+    dice_coefficient = np.mean(dice_numerator / dice_denominator)
+
+    return dice_coefficient
+
 class BalancedDiceLoss(nn.Module):
     def init(self):
         super(BalancedDiceLoss, self).init()
 
-    def forward(self, output, target, smooth=1.0):
-        iflat = output.contiguous().view(-1)
-        tflat = target.contiguous().view(-1)
-        intersection = (iflat * tflat).sum()
-        A_sum = torch.sum(iflat * iflat)
-        B_sum = torch.sum(tflat * tflat)
-        score_1 = 1 - ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
+    def forward(self, output, target, smooth=1.0, epsilon=1e-7, axis=(2, 3)):
+        """
+        Compute mean soft dice loss over all abnormality classes.
 
-        iflat = (1.0-output).contiguous().view(-1)
-        tflat = (1.0-target).contiguous().view(-1)
-        intersection = (iflat * tflat).sum()
-        A_sum = torch.sum(iflat * iflat)
-        B_sum = torch.sum(tflat * tflat)
-        score_2 = 1 - ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
+        Args:
+            y_true (Torch tensor): tensor of ground truth values for all classes.
+                                        shape: (batch, num_classes, x_dim, y_dim)
+            y_pred (Torch tensor): tensor of soft predictions for all classes.
+                                        shape: (batch, num_classes, x_dim, y_dim)
+            axis (tuple): spatial axes to sum over when computing numerator and
+                          denominator in formula for dice loss.
+                          Hint: pass this as the 'axis' argument to the K.sum
+                                and K.mean functions.
+            epsilon (float): small constant added to numerator and denominator to
+                            avoid divide by 0 errors.
+        Returns:
+            dice_loss (float): computed value of dice loss.  
+        """
+        y_true = target
+        y_pred = output
+        dice_numerator = 2*torch.sum(y_true*y_pred, dim=axis) + epsilon
+        dice_denominator = (torch.sum(y_true*y_true, dim=axis) + torch.sum(y_pred*y_pred, dim=axis) + epsilon)
+        dice_coefficient = torch.mean(dice_numerator / dice_denominator)
+        
+        dice_loss = 1 - dice_coefficient
+        return dice_loss
 
-        return (score_1+score_2)/2.0
 
-def DiceCoef(output, target):
-    smooth = 1.
-    iflat = output.ravel()
-    tflat = target.ravel()
-    intersection = (iflat * tflat).sum()
-    A_sum = np.sum(iflat * iflat)
-    B_sum = np.sum(tflat * tflat)
-    return ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
 
 class ImageNetLightningModel(LightningModule):
     """Summary
@@ -89,15 +119,20 @@ class ImageNetLightningModel(LightningModule):
         """
         super(ImageNetLightningModel, self).__init__()
         self.hparams = hparams
-        if self.hparams.arch.lower() == 'unet' and self.hparams.backbone.lower() == 'vgg':
-            self.model = UNet(input_channels=1, num_classes=self.hparams.types)
-        elif self.hparams.arch.lower() == 'uppnet' and self.hparams.backbone.lower() == 'vgg':
-            self.model = UPPNet(input_channels=1, num_classes=self.hparams.types)
-        elif self.hparams.arch.lower() == 'fusionnet' and self.hparams.backbone.lower() == 'vgg':
-            self.model = FusionNet(input_channels=1, num_classes=self.hparams.types)
-        else:
-            ValueError
+        # if self.hparams.arch.lower() == 'unet' and self.hparams.backbone.lower() == 'vgg':
+        #     self.model = UNet(input_channels=1, num_classes=self.hparams.types)
+        # elif self.hparams.arch.lower() == 'uppnet' and self.hparams.backbone.lower() == 'vgg':
+        #     self.model = UPPNet(input_channels=1, num_classes=self.hparams.types)
+        # elif self.hparams.arch.lower() == 'fusionnet' and self.hparams.backbone.lower() == 'vgg':
+        #     self.model = FusionNet(input_channels=1, num_classes=self.hparams.types)
+        # else:
+        #     ValueError
         # print(self.model.parameters())
+        self.model = getattr(smp, self.hparams.arch)(self.hparams.backbone, 
+                                                     classes=self.hparams.types, 
+                                                     activation='sigmoid')
+        print(self.model)
+        self.model.encoder.layer0.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         # logits -> nn.BCEWithLogitsLoss
         # logits -> sigmoid -> nn.BCELoss
         self.criterion = BalancedDiceLoss()
@@ -111,7 +146,8 @@ class ImageNetLightningModel(LightningModule):
         Returns:
             TYPE: Description
         """
-        y = (torch.tanh(self.model(x / 128.0 - 1.0)) / 2.0 + 0.5)*255.0
+        # y = (torch.tanh(self.model(x / 128.0 - 1.0)) / 2.0 + 0.5)*255.0
+        y = self.model(x / 255.0) * 255.0
         return y
 
     def training_step(self, batch, batch_idx, prefix='train'):
@@ -237,32 +273,32 @@ class ImageNetLightningModel(LightningModule):
         Returns:
             TYPE: Description
         """
-        loss_mean = torch.stack([x[f'{prefix}_loss'] for x in outputs]).mean()
-
+        
         np_output = torch.cat([x[f'{prefix}_output'].squeeze_(0) for x in outputs], axis=0).to('cpu').numpy()
         np_target = torch.cat([x[f'{prefix}_target'].squeeze_(0) for x in outputs], axis=0).to('cpu').numpy()
 
         # Casting to binary
         result = {}
-        result[f'{prefix}_loss'] = loss_mean
-
         tqdm_dict = {}
-        tqdm_dict[f'{prefix}_loss'] = loss_mean
-
         tb_log = {}
-        tb_log[f'{prefix}_loss'] = loss_mean
+        
+        # Calculate 
+        # macro dice-score: average dice-score of each image
+        # micro dice-score: flatten all images and calculate
 
-        dice_scores = []
         if np_output.shape[0] > 0 and np_target.shape[0] > 0:
             for p in range(self.hparams.types):
-                dice_score = DiceCoef(np_output[:, p] / 255.0, np_target[:, p] / 255.0)
-                tqdm_dict[f'{prefix}_dice_score_{p}'] = f'{dice_score:0.4f}'  
-                tb_log[f'{prefix}_dice_score_{p}'] = dice_score     
-                dice_scores.append(dice_score)      
-
-        tqdm_dict[f'{prefix}_dice_score_mean'] = np.array(dice_scores).mean()
-        tb_log[f'{prefix}_dice_score_mean'] = np.array(dice_scores).mean()
-        
+                macro_dice_score = DiceCoef(np_output[:, p:p+1] / 255.0, 
+                                            np_target[:, p:p+1] / 255.0, 
+                                            axis=(2,3))
+                micro_dice_score = DiceCoef(np_output[:, p:p+1] / 255.0, 
+                                            np_target[:, p:p+1] / 255.0, 
+                                            axis=(0,2,3))
+                tqdm_dict[f'{prefix}_macro_dice_score_{p}'] = f'{macro_dice_score:0.4f}'  
+                tqdm_dict[f'{prefix}_micro_dice_score_{p}'] = f'{micro_dice_score:0.4f}'  
+                tb_log[f'{prefix}_macro_dice_score_{p}'] = macro_dice_score 
+                tb_log[f'{prefix}_micro_dice_score_{p}'] = micro_dice_score 
+     
         pprint(tqdm_dict)
         result['log'] = tb_log
 
@@ -351,7 +387,6 @@ class ImageNetLightningModel(LightningModule):
             ds_train = AugmentImageComponents(ds_train, ag_train, [0, 1, 2, 3, 4, 5, 6])
         elif self.hparams.types==1:
             ds_train = AugmentImageComponents(ds_train, ag_train, [0, 1])
-        ds_train = PrintData(ds_train)
         
         ds_train = BatchData(ds_train, self.hparams.batch, remainder=True)
         if self.hparams.debug:
@@ -391,7 +426,6 @@ class ImageNetLightningModel(LightningModule):
             imgaug.Resize(self.hparams.shape, interp=cv2.INTER_NEAREST),
             imgaug.ToFloat32(),
         ]
-        ds_valid = PrintData(ds_valid)
         ds_valid = AugmentImageComponent(ds_valid, [imgaug.Albumentations(AB.CLAHE(p=1)),
                                                     ], 0)
         if self.hparams.types==6:
@@ -400,6 +434,7 @@ class ImageNetLightningModel(LightningModule):
             ds_valid = AugmentImageComponents(ds_valid, ag_valid, [0, 1])
         ds_valid = BatchData(ds_valid, self.hparams.batch, remainder=True)
         ds_valid = MultiProcessRunner(ds_valid, num_proc=4, num_prefetch=16)
+        ds_valid = PrintData(ds_valid)
         if self.hparams.types==6:
             ds_valid = MapData(ds_valid, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
                                                      torch.tensor(dp[1][:,np.newaxis,:,:]).float(),
@@ -546,6 +581,7 @@ def main(hparams):
     checkpoint_callback = ModelCheckpoint(
         filepath=os.path.join(str(hparams.save),
                               str(hparams.arch),
+                              str(hparams.backbone),
                               str(hparams.pathology),
                               str(hparams.shape),
                               str(hparams.types),
@@ -554,7 +590,7 @@ def main(hparams):
                               'ckpt'),
         save_top_k=10,
         verbose=True,
-        monitor='val_dice_score_mean',  # TODO
+        monitor='val_micro_dice_score_0',  # TODO
         mode='max'
     )
 
@@ -565,6 +601,7 @@ def main(hparams):
         num_sanity_val_steps=0,
         default_save_path=os.path.join(str(hparams.save),
                                    str(hparams.arch),
+                                   str(hparams.backbone),
                                    str(hparams.pathology),
                                    str(hparams.shape),
                                    str(hparams.types),
