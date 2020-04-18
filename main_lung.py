@@ -478,7 +478,7 @@ class ImageNetLightningModel(LightningModule):
             imgaug.Resize(self.hparams.shape, interp=cv2.INTER_NEAREST),
             imgaug.ToFloat32(),
         ]
-        ds_valid = AugmentImageComponent(ds_valid, [imgaug.Albumentations(AB.CLAHE(tile_grid_size=(32, 32), p=1)),], 0)
+        ds_valid = AugmentImageComponent(ds_valid, [imgaug.Albumentations(AB.CLAHE(tile_grid_size=(32, 32), always_apply=True, p=1),),], 0)
         ds_valid = AugmentImageComponents(ds_valid, ag_valid, [0, 1])
         ds_valid = BatchData(ds_valid, self.hparams.batch, remainder=True)
         ds_valid = MultiProcessRunner(ds_valid, num_proc=4, num_prefetch=16)
@@ -506,7 +506,7 @@ class ImageNetLightningModel(LightningModule):
             imgaug.Resize(self.hparams.shape, interp=cv2.INTER_NEAREST),
             imgaug.ToFloat32(),
         ]
-        # ds_test = AugmentImageComponent(ds_test, [imgaug.Albumentations(AB.CLAHE(tile_grid_size=(32, 32), p=1)),], 0)
+        # ds_test = AugmentImageComponent(ds_test, [imgaug.Albumentations(AB.CLAHE(tile_grid_size=(32, 32), always_apply=True, p=1)),], 0)
         ds_test = AugmentImageComponents(ds_test, ag_test, [0, 1])
         ds_test = BatchData(ds_test, self.hparams.batch, remainder=True)
         ds_test = MultiProcessRunner(ds_test, num_proc=4, num_prefetch=16)
