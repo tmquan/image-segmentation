@@ -48,7 +48,7 @@ from tensorpack.utils.utils import get_rng
 import os
 import cv2
 import numpy as np
-
+import shutil
 import sklearn.metrics
 import glob2
 import skimage.io
@@ -531,7 +531,7 @@ class ImageNetLightningModel(LightningModule):
                             help='model architecture')
         parser.add_argument('-bb', '--backbone', metavar='backbone', default='vgg', 
                             help='backbone')
-        parser.add_argument('--epochs', default=250, type=int, metavar='N',
+        parser.add_argument('--epochs', default=500, type=int, metavar='N',
                             help='number of total epochs to run')
         parser.add_argument('--seed', type=int, default=2222,
                             help='seed for initializing training. ')
@@ -645,6 +645,26 @@ def main(hparams):
         model = ImageNetLightningModel(hparams).load_from_checkpoint(hparams.load)
         model.eval()
         trainer.test(model)
+    elif hparams.pred:
+        assert hparams.load
+        model = ImageNetLightningModel(hparams).load_from_checkpoint(hparams.load)
+        model.eval()
+
+        imageFiles = natsorted (glob2.glob(hparams.data + '/*.*'))
+        folder = 'result'
+        shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder)
+        for idx, imageFile in enumerate(imageFiles):
+            image = cv2.imread(imageFile, cv2.IMREAD_GRAYSCALE)
+            shape = image.shape
+            image = cv2.resize(image, (hparams.shape, hparams.shape), cv2.INTER_AREA)
+            image = image[np.newaxis, np.newaxis,:,:].astype(np.float32)
+            image = torch.Tensor(torch.tensor(image))
+            estim = model(image).detach().to('cpu').numpy()
+            estim = np.squeeze(estim).astype(np.uint8)
+            estim = cv2.resize(estim, shape[::-1], cv2.INTER_AREA)
+            print(os.path.basename(imageFile), idx+1, len(imageFiles))
+            cv2.imwrite(os.path.join(folder, os.path.basename(imageFile)), estim)
     else:
         trainer.fit(model)
 
