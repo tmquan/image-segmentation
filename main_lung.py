@@ -79,8 +79,8 @@ class CustomDataSet(RNGDataFlow):
             self.imageDir = os.path.join(folder, 'test', 'images')
             self.labelDir = os.path.join(folder, 'test', 'labels')
 
-        self.imageFiles = natsorted (glob2.glob(self.imageDir + '/C*.*'))
-        self.labelFiles = natsorted (glob2.glob(self.labelDir + '/C*.*'))
+        self.imageFiles = natsorted (glob2.glob(self.imageDir + '/*.*'))
+        self.labelFiles = natsorted (glob2.glob(self.labelDir + '/*.*'))
         print(self.imageFiles, self.labelFiles)
         self._size = min(size, len(self.imageFiles))
         print(self._size)
@@ -165,8 +165,6 @@ class SoftDiceLoss(nn.Module):
         
         dice_loss = 1 - dice_coefficient
         return dice_loss
-
-
 
 class ImageNetLightningModel(LightningModule):
     """Summary
@@ -508,13 +506,14 @@ class ImageNetLightningModel(LightningModule):
             imgaug.Resize(self.hparams.shape, interp=cv2.INTER_NEAREST),
             imgaug.ToFloat32(),
         ]
-        # ds_test = AugmentImageComponent(ds_test, [imgaug.Albumentations(AB.CLAHE(p=1)),], 0)
-        ds_test = AugmentImageComponent(ds_test, ag_test, 0)
+        ds_test = AugmentImageComponent(ds_test, [imgaug.Albumentations(AB.CLAHE(tile_grid_size=(32, 32), p=1)),], 0)
+        ds_test = AugmentImageComponents(ds_test, ag_test, [0, 1])
         ds_test = BatchData(ds_test, self.hparams.batch, remainder=True)
-        # ds_test = MultiProcessRunner(ds_test, num_proc=4, num_prefetch=16)
+        ds_test = MultiProcessRunner(ds_test, num_proc=4, num_prefetch=16)
         ds_test = PrintData(ds_test)
         ds_test = MapData(ds_test, lambda dp: [torch.tensor(dp[0][:,np.newaxis,:,:]).float(), 
-                                               torch.tensor(dp[1][:,np.newaxis,:,:]).float()])
+                                                 torch.tensor(dp[1][:,np.newaxis,:,:]).float(),
+                                                 ])
         return ds_test
 
     @staticmethod
@@ -561,43 +560,30 @@ def get_args():
         TYPE: Description
     """
     parent_parser = argparse.ArgumentParser(add_help=False)
-    parent_parser.add_argument('--data', metavar='DIR', default=".", type=str,
-                               help='path to dataset')
-    parent_parser.add_argument('--save', metavar='DIR', default="train_log", type=str,
-                               help='path to save output')
-    parent_parser.add_argument('--info', metavar='DIR', default="train_log",
-                               help='path to logging output')
-    parent_parser.add_argument('--gpus', type=int, default=1,
-                               help='how many gpus')
-    parent_parser.add_argument('--distributed-backend', type=str, default='dp', choices=('dp', 'ddp', 'ddp2'),
-                               help='supports three options dp, ddp, ddp2')
-    parent_parser.add_argument('--use-16bit', dest='use_16bit', action='store_true',
-                               help='if true uses 16 bit precision')
-    parent_parser.add_argument('--percent_check', default=1.0, type=float,
-                               help="float/int. If float, % of tng epoch. If int, check every n batch")
-    parent_parser.add_argument('--val_check_interval', default=1.0, type=float,
-                               help="float/int. If float, % of tng epoch. If int, check every n batch")
-    parent_parser.add_argument('--fast_dev_run', default=False, action='store_true',
-                               help='fast_dev_run: runs 1 batch of train, test, val (ie: a unit test)')
+    parent_parser.add_argument('--data', type=str, default=".", help='path to dataset')
+    parent_parser.add_argument('--save', type=str, default="train_log", help='path to save output')
+    parent_parser.add_argument('--info', type=str, default="train_log", help='path to logging output')
+    parent_parser.add_argument('--gpus', type=int, default=1, help='how many gpus')
+    parent_parser.add_argument('--distributed-backend', type=str, default='dp', choices=('dp', 'ddp', 'ddp2'), help='supports three options dp, ddp, ddp2')
+    parent_parser.add_argument('--use-16bit', dest='use_16bit', action='store_true', help='if true uses 16 bit precision')
+    parent_parser.add_argument('--percent_check', type=float, default=1.0, help="float/int. If float, % of tng epoch. If int, check every n batch")
+    parent_parser.add_argument('--val_check_interval', type=float, default=1.0, help="float/int. If float, % of tng epoch. If int, check every n batch")
+    parent_parser.add_argument('--fast_dev_run', action='store_true', default=False, help='fast_dev_run: runs 1 batch of train, test, val (ie: a unit test)')
 
     parent_parser.add_argument('--types', type=int, default=1)
     parent_parser.add_argument('--threshold', type=float, default=0.5)
-    parent_parser.add_argument('--pathology', default='All')
+    parent_parser.add_argument('--pathology', type=str, default='All')
     parent_parser.add_argument('--shape', type=int, default=512)
     # parent_parser.add_argument('--folds', type=int, default=5)
 
     # Inference purpose
     # parent_parser.add_argument('--load', help='load model')
-    parent_parser.add_argument('--load', action='store_true',
-                               help='path to logging output')
-    parent_parser.add_argument('--pred', action='store_true',
-                               help='run predict')
-    parent_parser.add_argument('--eval', action='store_true',
-                               help='run offline evaluation instead of training')
+    parent_parser.add_argument('--load', type=str, help='path to logging output')
+    parent_parser.add_argument('--pred', action='store_true', help='run predict')
+    parent_parser.add_argument('--eval', action='store_true', help='run offline evaluation instead of training')
 
     parser = ImageNetLightningModel.add_model_specific_args(parent_parser)
     return parser.parse_args()
-
 
 def main(hparams):
     """Summary
@@ -639,12 +625,12 @@ def main(hparams):
         test_percent_check=hparams.percent_check,
         num_sanity_val_steps=0,
         default_save_path=os.path.join(str(hparams.save),
-                                   str(hparams.arch),
-                                   str(hparams.backbone),
-                                   str(hparams.pathology),
-                                   str(hparams.shape),
-                                   str(hparams.types),
-                                   ),
+                                       str(hparams.arch),
+                                       str(hparams.backbone),
+                                       str(hparams.pathology),
+                                       str(hparams.shape),
+                                       str(hparams.types),
+                                       ),
         gpus=hparams.gpus,
         max_epochs=hparams.epochs,
         checkpoint_callback=checkpoint_callback,
@@ -655,7 +641,10 @@ def main(hparams):
         val_check_interval=hparams.val_check_interval,
     )
     if hparams.eval:
-        trainer.run_evaluation()
+        assert hparams.load
+        model = ImageNetLightningModel(hparams).load_from_checkpoint(hparams.load)
+        model.eval()
+        trainer.test(model)
     else:
         trainer.fit(model)
 
