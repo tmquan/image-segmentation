@@ -81,7 +81,7 @@ class CustomDataSet(RNGDataFlow):
 
         self.imageFiles = natsorted (glob2.glob(self.imageDir + '/*.*'))
         self.labelFiles = natsorted (glob2.glob(self.labelDir + '/*.*'))
-        print(self.imageFiles, self.labelFiles)
+        # print(self.imageFiles, self.labelFiles)
         self._size = min(size, len(self.imageFiles))
         print(self._size)
   
@@ -506,7 +506,7 @@ class ImageNetLightningModel(LightningModule):
             imgaug.Resize(self.hparams.shape, interp=cv2.INTER_NEAREST),
             imgaug.ToFloat32(),
         ]
-        ds_test = AugmentImageComponent(ds_test, [imgaug.Albumentations(AB.CLAHE(tile_grid_size=(32, 32), p=1)),], 0)
+        # ds_test = AugmentImageComponent(ds_test, [imgaug.Albumentations(AB.CLAHE(tile_grid_size=(32, 32), p=1)),], 0)
         ds_test = AugmentImageComponents(ds_test, ag_test, [0, 1])
         ds_test = BatchData(ds_test, self.hparams.batch, remainder=True)
         ds_test = MultiProcessRunner(ds_test, num_proc=4, num_prefetch=16)
